@@ -1,4 +1,3 @@
-
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
@@ -11,96 +10,81 @@ const app = express();
 app.use(bodyParser.json());
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
+
+const HEADERS = {
+  Authorization: `Bearer ${OPENAI_API_KEY}`,
+  "OpenAI-Beta": "assistants=v2",
+  "Content-Type": "application/json",
+};
+
+// Função auxiliar para delay
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 app.post("/webhook", async (req, res) => {
-  console.log("Recebi algo do Telegram:", req.body);
+  const message = req.body?.message;
+  const chatId = message?.chat?.id;
+  const userMessage = message?.text;
 
-  const message = req.body.message;
-  const chatId = message.chat.id;
-  const userMessage = message.text;
+  if (!chatId || !userMessage) {
+    return res.sendStatus(400);
+  }
 
   try {
-    const thread = await axios.post(
-      "https://api.openai.com/v1/threads",
-      {},
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "OpenAI-Beta": "assistants=v2",
-          "Content-Type": "application/json"
-        }
-      }
-    );
+    // Cria thread
+    const threadRes = await axios.post(`${OPENAI_BASE_URL}/threads`, {}, { headers: HEADERS });
+    const threadId = threadRes.data.id;
 
-    const threadId = thread.data.id;
-
+    // Envia mensagem do usuário
     await axios.post(
-      `https://api.openai.com/v1/threads/${threadId}/messages`,
-      {
-        role: "user",
-        content: userMessage
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "OpenAI-Beta": "assistants=v2",
-          "Content-Type": "application/json"
-        }
-      }
+      `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
+      { role: "user", content: userMessage },
+      { headers: HEADERS }
     );
 
-    const run = await axios.post(
-      `https://api.openai.com/v1/threads/${threadId}/runs`,
-      {
-        assistant_id: OPENAI_ASSISTANT_ID
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "OpenAI-Beta": "assistants=v2",
-          "Content-Type": "application/json"
-        }
-      }
+    // Inicia o assistente
+    const runRes = await axios.post(
+      `${OPENAI_BASE_URL}/threads/${threadId}/runs`,
+      { assistant_id: OPENAI_ASSISTANT_ID },
+      { headers: HEADERS }
     );
 
-    let runStatus;
-    do {
-      await new Promise((r) => setTimeout(r, 2000));
-      const status = await axios.get(
-        `https://api.openai.com/v1/threads/${threadId}/runs/${run.data.id}`,
-        {
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "OpenAI-Beta": "assistants=v2"
-          }
-        }
-      );
-      runStatus = status.data.status;
-    } while (runStatus !== "completed");
+    const runId = runRes.data.id;
 
-    const messages = await axios.get(
-      `https://api.openai.com/v1/threads/${threadId}/messages`,
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "OpenAI-Beta": "assistants=v2"
-        }
-      }
-    );
+    // Aguarda conclusão do run
+    let status = "queued";
+    while (status !== "completed" && status !== "failed") {
+      await delay(2000);
+      const statusRes = await axios.get(`${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}`, {
+        headers: HEADERS,
+      });
+      status = statusRes.data.status;
+    }
 
-    const reply = messages.data.data[0].content[0].text.value;
+    if (status === "failed") {
+      throw new Error("Falha na execução da Assistant");
+    }
 
+    // Obtém a resposta
+    const messagesRes = await axios.get(`${OPENAI_BASE_URL}/threads/${threadId}/messages`, {
+      headers: HEADERS,
+    });
+
+    const reply =
+      messagesRes.data?.data?.[0]?.content?.[0]?.text?.value || "Desculpe, não consegui responder.";
+
+    // Envia resposta no Telegram
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
-      text: reply
+      text: reply,
     });
 
     res.sendStatus(200);
   } catch (error) {
-    console.error(error.response?.data || error.message);
+    console.error("Erro:", error.response?.data || error.message);
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
-      text: "Erro ao responder 😕"
+      text: "Erro ao responder 😕",
     });
     res.sendStatus(500);
   }
@@ -108,5 +92,5 @@ app.post("/webhook", async (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log("Bot rodando na porta " + port);
+  console.log(`Bot rodando na porta ${port}`);
 });
