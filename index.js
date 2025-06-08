@@ -5,6 +5,7 @@ const axios = require("axios");
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID;
+const SENHA_SECRETA = "1234acesso"; // 🔐 Defina aqui sua senha
 
 const app = express();
 app.use(bodyParser.json());
@@ -18,8 +19,11 @@ const HEADERS = {
   "Content-Type": "application/json",
 };
 
-// Função auxiliar para delay
+// Delay auxiliar
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Lista de chat_ids autorizados (em memória)
+const chatIdsAutorizados = new Set();
 
 app.post("/webhook", async (req, res) => {
   const message = req.body?.message;
@@ -28,6 +32,23 @@ app.post("/webhook", async (req, res) => {
 
   if (!chatId || !userMessage) {
     return res.sendStatus(400);
+  }
+
+  // Verifica se o chat está autorizado
+  if (!chatIdsAutorizados.has(chatId)) {
+    if (userMessage === SENHA_SECRETA) {
+      chatIdsAutorizados.add(chatId);
+      await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatId,
+        text: "✅ Acesso autorizado! Pode enviar suas perguntas.",
+      });
+    } else {
+      await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatId,
+        text: "🔒 Este bot é restrito. Envie a senha de acesso.",
+      });
+    }
+    return res.sendStatus(200);
   }
 
   try {
@@ -51,7 +72,7 @@ app.post("/webhook", async (req, res) => {
 
     const runId = runRes.data.id;
 
-    // Aguarda conclusão do run
+    // Aguarda conclusão
     let status = "queued";
     while (status !== "completed" && status !== "failed") {
       await delay(2000);
@@ -65,7 +86,7 @@ app.post("/webhook", async (req, res) => {
       throw new Error("Falha na execução da Assistant");
     }
 
-    // Obtém a resposta
+    // Resposta
     const messagesRes = await axios.get(`${OPENAI_BASE_URL}/threads/${threadId}/messages`, {
       headers: HEADERS,
     });
@@ -73,7 +94,7 @@ app.post("/webhook", async (req, res) => {
     const reply =
       messagesRes.data?.data?.[0]?.content?.[0]?.text?.value || "Desculpe, não consegui responder.";
 
-    // Envia resposta no Telegram
+    // Envia no Telegram
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
       text: reply,
