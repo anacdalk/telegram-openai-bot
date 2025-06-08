@@ -5,7 +5,7 @@ const axios = require("axios");
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID;
-const SENHA_SECRETA = "1234acesso"; // 🔐 Defina aqui sua senha
+const SENHA_SECRETA = "1234"; // 🔐 Defina aqui sua senha
 
 const app = express();
 app.use(bodyParser.json());
